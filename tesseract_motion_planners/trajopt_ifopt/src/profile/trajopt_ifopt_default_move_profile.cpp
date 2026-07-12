@@ -95,7 +95,8 @@ TrajOptIfoptDefaultMoveProfile::create(const tesseract::command_language::MoveIn
   std::vector<std::string> joint_names = env->getGroupJointNames(mi.manipulator);
   assert(checkJointPositionFormat(joint_names, move_instruction.getWaypoint()));
 
-  tesseract::kinematics::JointGroup::ConstPtr manip = env->getJointGroup(mi.manipulator);
+  // [fable P0a 2026-07-12] private JointGroup — see trajopt_ifopt_motion_planner.cpp
+  tesseract::kinematics::JointGroup::ConstPtr manip = std::make_shared<tesseract::kinematics::JointGroup>(*env->getJointGroup(mi.manipulator));
   const std::vector<trajopt_ifopt::Bounds> bounds = trajopt_ifopt::toBounds(manip->getLimits().joint_limits);
 
   TrajOptIfoptWaypointInfo info;
