@@ -129,7 +129,8 @@ createCollisionConstraints(const std::vector<std::shared_ptr<const trajopt_ifopt
   if (config.collision_check_config.type == tesseract::collision::CollisionEvaluatorType::NONE)
     return constraints;
 
-  std::shared_ptr<const tesseract::kinematics::JointGroup> manip = env->getJointGroup(manip_info.manipulator);
+  // [fable P0a 2026-07-12] private JointGroup — see trajopt_ifopt_motion_planner.cpp
+  std::shared_ptr<const tesseract::kinematics::JointGroup> manip = std::make_shared<tesseract::kinematics::JointGroup>(*env->getJointGroup(manip_info.manipulator));
 
   // Add a collision cost for all steps
   if (config.collision_check_config.type == tesseract::collision::CollisionEvaluatorType::DISCRETE)

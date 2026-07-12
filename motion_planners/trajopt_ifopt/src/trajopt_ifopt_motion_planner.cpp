@@ -195,7 +195,12 @@ PlannerResponse TrajOptIfoptMotionPlanner::solve(const PlannerRequest& request) 
     response.message = SOLUTION_FOUND;
   }
 
-  auto manip = request.env->getJointGroup(composite_mi.manipulator);
+  // [fable P0a 2026-07-12] PRIVATE JointGroup per solve: Environment::clone() SHARES the
+  // joint_group_cache (environment.cpp:460), so the cached JointGroup (one mutex around the
+  // non-thread-safe KDL state solver) is contended by every in-process consumer — during a GP25
+  // pack each FK/Jacobian serialized, inflating one SQP iteration from ~0.03 s to 60-77 s.
+  // Upstream fixed this pattern for classic trajopt only (63ab0a34); trajopt_ifopt needs it too.
+  auto manip = std::make_shared<tesseract::kinematics::JointGroup>(*request.env->getJointGroup(composite_mi.manipulator));
   const std::vector<std::string> joint_names = manip->getJointNames();
   const Eigen::MatrixX2d joint_limits = manip->getLimits().joint_limits;
 
