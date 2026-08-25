@@ -46,7 +46,16 @@ TESSERACT_COMMON_IGNORE_WARNINGS_POP
 #include <tesseract/kinematics/kinematic_group.h>
 #include <tesseract/environment/environment.h>
 #include <tesseract/command_language/poly/move_instruction_poly.h>
+#include <tesseract/command_language/poly/waypoint_poly.h>
 #include <tesseract/command_language/utils.h>
+
+// GP25 fable-constraint-spike debug hook (flag-gated, .cpp-body only, ABI-safe)
+#include <atomic>
+#include <cstdlib>
+#include <fstream>
+#include <sstream>
+#include <typeinfo>
+#include <unistd.h>
 
 constexpr auto SOLUTION_FOUND{ "Found valid solution" };
 constexpr auto ERROR_INVALID_INPUT{ "Failed invalid input" };
@@ -105,10 +114,50 @@ PlannerResponse TrajOptIfoptMotionPlanner::solve(const PlannerRequest& request) 
         move_instructions[static_cast<std::size_t>(i)].get().as<tesseract::command_language::MoveInstructionPoly>();
 
     // Get Plan Profile
+    // GP25 debug: default is a named local so we can detect dictionary-miss fallback by pointer identity
+    auto fable_default_move_profile = std::make_shared<TrajOptIfoptDefaultMoveProfile>();
     TrajOptIfoptMoveProfile::ConstPtr cur_move_profile = request.profiles->getProfile<TrajOptIfoptMoveProfile>(
-        name_, move_instruction.getProfile(name_), std::make_shared<TrajOptIfoptDefaultMoveProfile>());
+        name_, move_instruction.getProfile(name_), fable_default_move_profile);
     if (!cur_move_profile)
       throw std::runtime_error("TrajOptIfoptMotionPlanner: Invalid profile");
+
+    // GP25 fable-constraint-spike: log per-move profile-key resolution (flag-gated, first 70 lines)
+    {
+      static const bool fable_dbg_on = []() {
+        const char* home = std::getenv("HOME");
+        const std::string flag_path = (home != nullptr ? std::string(home) : std::string()) +
+                                      "/.config/gp25_trajopt_debug.on";
+        return std::ifstream(flag_path).good();
+      }();
+      static std::atomic<int> fable_dbg_lines{ 0 };
+      if (fable_dbg_on && fable_dbg_lines.fetch_add(1) < 70)
+      {
+        std::ofstream fable_log("/tmp/fable_keylog_" + std::to_string(::getpid()) + ".txt", std::ios::app);
+        if (fable_log)
+        {
+          const auto& fable_wp = move_instruction.getWaypoint();
+          const char* fable_wp_type = fable_wp.isStateWaypoint()     ? "state" :
+                                      fable_wp.isCartesianWaypoint() ? "cartesian" :
+                                      fable_wp.isJointWaypoint()     ? "joint" :
+                                                                       "other";
+          std::ostringstream fable_coeff;
+          const auto* fable_dmp = dynamic_cast<const TrajOptIfoptDefaultMoveProfile*>(cur_move_profile.get());
+          if (fable_dmp != nullptr)
+            fable_coeff << fable_dmp->cartesian_constraint_config.coeff.transpose();
+          else
+            fable_coeff << "<resolved profile is not TrajOptIfoptDefaultMoveProfile: "
+                        << typeid(*cur_move_profile).name() << ">";
+          const bool fable_fallback =
+              (cur_move_profile.get() ==
+               static_cast<const TrajOptIfoptMoveProfile*>(fable_default_move_profile.get()));
+          fable_log << "i=" << i << " ns='" << name_ << "'"
+                    << " raw_profile='" << move_instruction.getProfile(name_) << "'"
+                    << " wp=" << fable_wp_type
+                    << " cart_coeff=[" << fable_coeff.str() << "]"
+                    << " fallback=" << (fable_fallback ? 1 : 0) << "\n";
+        }
+      }
+    }
 
     // Create waypoint info
     TrajOptIfoptWaypointInfo wp_info = cur_move_profile->create(move_instruction, composite_mi, request.env, i);
